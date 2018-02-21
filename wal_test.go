@@ -2,6 +2,7 @@ package wal
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 )
 
@@ -31,18 +32,26 @@ func TestWrite(t *testing.T) {
 
 func TestRead(t *testing.T) {
 	wal := NewWAL()
-	record := Record{Type: FULL, Data: []byte{1, 2, 3, 4, 5}}
+	data := []byte{1, 2, 3, 4, 5}
+	record := Record{Type: FULL, Data: data}
 	record.len()
 	record.crc()
-	data, err := record.Bytes()
+	b := bytes.Buffer{}
+	_, err := record.Write(&b)
 	if err != nil {
 		t.Error(err)
 	}
-	r := bytes.NewReader(data)
-	_, err = wal.Read(r)
+	r := bytes.NewReader(b.Bytes())
+	records, err := wal.Read(r)
 	if err != nil {
 		t.Error(err)
 	}
+	for _, rec := range records {
+		if int(rec.Length) != len(rec.Data) {
+			t.Errorf("Expected len %d got %d", len(rec.Data), rec.Length)
+		}
+	}
+	fmt.Printf("TestRead %+v\n", records)
 }
 
 func TestPadding(t *testing.T) {
@@ -57,6 +66,41 @@ func TestFullBlock(t *testing.T) {
 	wal := NewWAL()
 	wal.blockSize = 10
 	wal.pos = 5
+	record := NewRecord([]byte{1, 2, 3})
+	wal.Write(&record)
+}
+
+func TestMiddle(t *testing.T) {
+	wal := NewWAL()
+	wal.blockSize = 10
+	record := NewRecord([]byte{1, 2, 3, 4, 5, 6, 7, 8})
+	if err := wal.Write(&record); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestReadSplit(t *testing.T) {
+	wal := NewWAL()
+	wal.blockSize = 10
+	record := NewRecord([]byte{1, 2, 3, 4, 5, 6, 7, 8})
+	if err := wal.Write(&record); err != nil {
+		t.Error(err)
+	}
+	records, err := wal.Read(&wal.buffer)
+	if err != nil {
+		t.Error(err)
+	}
+	for _, rec := range records {
+		if int(rec.Length) != len(rec.Data) {
+			t.Errorf("Expected len %d got %d", len(rec.Data), rec.Length)
+		}
+	}
+	fmt.Printf("TestReadSplit %+v\n", records)
+}
+
+func TestSplitRecord(t *testing.T) {
+	wal := NewWAL()
+	wal.blockSize = 8
 	record := NewRecord([]byte{1, 2, 3})
 	wal.Write(&record)
 }
@@ -76,11 +120,12 @@ func BenchmarkRead(b *testing.B) {
 	record := Record{Type: FULL, Data: []byte{1, 2, 3, 4, 5}}
 	record.len()
 	record.crc()
-	data, err := record.Bytes()
+	buf := bytes.Buffer{}
+	_, err := record.Write(&buf)
 	if err != nil {
 		b.Error(err)
 	}
-	r := bytes.NewReader(data)
+	r := bytes.NewReader(buf.Bytes())
 	r.Seek(0, 0)
 	for n := 0; n < b.N; n++ {
 		if _, err := wal.Read(r); err != nil {
