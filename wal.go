@@ -93,8 +93,7 @@ func (wal *WAL) spaceInBlock() int {
 }
 
 func (wal *WAL) fitsCurrentBlock(lenData int) bool {
-	spaceInBlock := wal.spaceInBlock()
-	return lenData+7 <= spaceInBlock
+	return lenData+7 <= wal.spaceInBlock()
 }
 
 func (wal *WAL) Write(record *Record) error {
@@ -130,13 +129,14 @@ func (wal *WAL) Write(record *Record) error {
 		} else {
 			newLen = wal.spaceInBlock() - 7
 		}
+		data := record.Data[written : written+newLen]
 		record.Length = uint16(newLen)
+		record.Checksum = crc32.ChecksumIEEE(append(data, record.Type))
 		n, err := record.WriteHeader(&wal.buffer)
 		if err != nil {
 			return err
 		}
 		wal.pos += n
-		data := record.Data[written : written+newLen]
 		n, err = wal.buffer.Write(data)
 		if err != nil {
 			return err
@@ -148,26 +148,40 @@ func (wal *WAL) Write(record *Record) error {
 	return nil
 }
 
-func (wal *WAL) Read(r io.Reader) ([]Record, error) {
+func (wal *WAL) curPos(r *bytes.Reader) (int64, error) {
+	return r.Seek(0, io.SeekCurrent)
+}
+
+func (wal *WAL) Read(r *bytes.Reader) ([]Record, error) {
 	records := []Record{}
-	var err error
-	for err == nil {
-		record := Record{}
-		if err := binary.Read(r, binary.BigEndian, &record.Checksum); err != nil {
+	record := Record{}
+	for {
+		buffer := make([]byte, wal.blockSize)
+		_, err := r.Read(buffer)
+		if err != nil {
 			break
 		}
-		if err := binary.Read(r, binary.BigEndian, &record.Length); err != nil {
-			break
+		reader := bytes.NewReader(buffer)
+		for {
+			if err = binary.Read(reader, binary.BigEndian, &record.Checksum); err != nil {
+				break
+			}
+			if record.Checksum == 0 {
+				break
+			}
+			if err = binary.Read(reader, binary.BigEndian, &record.Length); err != nil {
+				break
+			}
+			if err = binary.Read(reader, binary.BigEndian, &record.Type); err != nil {
+				break
+			}
+			data := make([]byte, record.Length) // substracting the length of the type field
+			if err = binary.Read(reader, binary.BigEndian, &data); err != nil {
+				break
+			}
+			record.Data = data
+			records = append(records, record)
 		}
-		if err := binary.Read(r, binary.BigEndian, &record.Type); err != nil {
-			break
-		}
-		data := make([]byte, record.Length) // substracting the length of the type field
-		if err := binary.Read(r, binary.BigEndian, &data); err != nil {
-			break
-		}
-		record.Data = data
-		records = append(records, record)
 	}
 	return records, nil
 }

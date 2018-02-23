@@ -3,27 +3,30 @@ package wal
 import (
 	"bytes"
 	"fmt"
+	"hash/crc32"
 	"testing"
 )
 
+func validCRC(record *Record) bool {
+	return record.Checksum == crc32.ChecksumIEEE(append(record.Data, record.Type))
+}
+
 func TestCRC(t *testing.T) {
-	r := Record{Type: FULL, Data: []uint8{1}}
-	r.crc()
+	r := NewRecord([]uint8{1})
 	if r.Checksum != 801444648 {
 		t.Fatalf("Expecting checksum %d, got %d", 801444648, r.Checksum)
 	}
 }
 
 func TestLen(t *testing.T) {
-	r := Record{Data: []uint8{1}}
-	r.len()
+	r := NewRecord([]uint8{1})
 	if r.Length != 1 {
 		t.Fatalf("Expecting length %d, got %d", 1, r.Length)
 	}
 }
 
 func TestWrite(t *testing.T) {
-	r := Record{Data: []uint8{1}}
+	r := NewRecord([]uint8{1})
 	wal := NewWAL()
 	if err := wal.Write(&r); err != nil {
 		t.Error(err)
@@ -33,7 +36,7 @@ func TestWrite(t *testing.T) {
 func TestRead(t *testing.T) {
 	wal := NewWAL()
 	data := []byte{1, 2, 3, 4, 5}
-	record := Record{Type: FULL, Data: data}
+	record := NewRecord(data)
 	record.len()
 	record.crc()
 	b := bytes.Buffer{}
@@ -47,6 +50,9 @@ func TestRead(t *testing.T) {
 		t.Error(err)
 	}
 	for _, rec := range records {
+		if !validCRC(&rec) {
+			t.Errorf("Got invalid CRC %d", rec.Checksum)
+		}
 		if int(rec.Length) != len(rec.Data) {
 			t.Errorf("Expected len %d got %d", len(rec.Data), rec.Length)
 		}
@@ -86,11 +92,15 @@ func TestReadSplit(t *testing.T) {
 	if err := wal.Write(&record); err != nil {
 		t.Error(err)
 	}
-	records, err := wal.Read(&wal.buffer)
+	r := bytes.NewReader(wal.buffer.Bytes())
+	records, err := wal.Read(r)
 	if err != nil {
 		t.Error(err)
 	}
 	for _, rec := range records {
+		if !validCRC(&rec) {
+			t.Errorf("Got invalid CRC %d", rec.Checksum)
+		}
 		if int(rec.Length) != len(rec.Data) {
 			t.Errorf("Expected len %d got %d", len(rec.Data), rec.Length)
 		}
@@ -117,9 +127,8 @@ func BenchmarkWrite(b *testing.B) {
 
 func BenchmarkRead(b *testing.B) {
 	wal := NewWAL()
-	record := Record{Type: FULL, Data: []byte{1, 2, 3, 4, 5}}
-	record.len()
-	record.crc()
+	wal.blockSize = 10
+	record := NewRecord([]byte{1, 2, 3, 4, 5})
 	buf := bytes.Buffer{}
 	_, err := record.Write(&buf)
 	if err != nil {
