@@ -56,6 +56,11 @@ func (r *Record) len() {
 	r.Length = uint16(len(r.Data))
 }
 
+// Valid verifies the CRC
+func (r *Record) Valid() bool {
+	return r.Checksum == crc32.ChecksumIEEE(r.Data)
+}
+
 // WriteHeader returns the record header in bytes
 func (r *Record) WriteHeader(w io.Writer) (int, error) {
 	if err := binary.Write(w, binary.BigEndian, r.Checksum); err != nil {
