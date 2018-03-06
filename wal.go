@@ -23,6 +23,7 @@ type WAL struct {
 	buffer    bytes.Buffer
 	pos       int
 	blockSize int
+	crcTable  *crc32.Table
 }
 
 // Record contains a log message
@@ -33,10 +34,24 @@ type Record struct {
 	Data     []uint8
 }
 
+const maskDelta = 0xA282EAD8
+
+func mask(crc uint32) uint32 {
+	// Rotate right by 15 bits and add a constant.
+	return ((crc >> 15) | (crc << 17)) + maskDelta
+}
+
+// Return the crc whose masked representation is masked_crc.
+func unmask(crc uint32) uint32 {
+	rot := crc - maskDelta
+	return (rot >> 17) | (rot << 15)
+}
+
 // NewWAL create a new write ahead log
 func NewWAL() WAL {
 	return WAL{
 		blockSize: 2 << 15, // 32kb
+		crcTable:  crc32.MakeTable(0x82f63b78),
 	}
 }
 
@@ -49,7 +64,7 @@ func NewRecord(data []byte) Record {
 }
 
 func (r *Record) crc() {
-	r.Checksum = crc32.ChecksumIEEE(append(r.Data, r.Type))
+	r.Checksum = mask(crc32.Checksum(append([]byte{r.Type}, r.Data...), crc32.MakeTable(0x82f63b78)))
 }
 
 func (r *Record) len() {
@@ -58,18 +73,18 @@ func (r *Record) len() {
 
 // Valid verifies the CRC
 func (r *Record) Valid() bool {
-	return r.Checksum == crc32.ChecksumIEEE(r.Data)
+	return r.Checksum == mask(crc32.Checksum(append([]byte{r.Type}, r.Data...), crc32.MakeTable(0x82f63b78)))
 }
 
 // WriteHeader returns the record header in bytes
 func (r *Record) WriteHeader(w io.Writer) (int, error) {
-	if err := binary.Write(w, binary.BigEndian, r.Checksum); err != nil {
+	if err := binary.Write(w, binary.LittleEndian, r.Checksum); err != nil {
 		return 0, err
 	}
-	if err := binary.Write(w, binary.BigEndian, r.Length); err != nil {
+	if err := binary.Write(w, binary.LittleEndian, r.Length); err != nil {
 		return 0, err
 	}
-	if err := binary.Write(w, binary.BigEndian, r.Type); err != nil {
+	if err := binary.Write(w, binary.LittleEndian, r.Type); err != nil {
 		return 0, err
 	}
 	return 7, nil
@@ -136,7 +151,7 @@ func (wal *WAL) Write(record *Record) error {
 		}
 		data := record.Data[written : written+newLen]
 		record.Length = uint16(newLen)
-		record.Checksum = crc32.ChecksumIEEE(append(data, record.Type))
+		record.Checksum = mask(crc32.Checksum(append([]byte{record.Type}, data...), wal.crcTable))
 		n, err := record.WriteHeader(&wal.buffer)
 		if err != nil {
 			return err
@@ -168,20 +183,20 @@ func (wal *WAL) Read(r *bytes.Reader) ([]Record, error) {
 		}
 		reader := bytes.NewReader(buffer)
 		for {
-			if err = binary.Read(reader, binary.BigEndian, &record.Checksum); err != nil {
+			if err = binary.Read(reader, binary.LittleEndian, &record.Checksum); err != nil {
 				break
 			}
 			if record.Checksum == 0 {
 				break
 			}
-			if err = binary.Read(reader, binary.BigEndian, &record.Length); err != nil {
+			if err = binary.Read(reader, binary.LittleEndian, &record.Length); err != nil {
 				break
 			}
-			if err = binary.Read(reader, binary.BigEndian, &record.Type); err != nil {
+			if err = binary.Read(reader, binary.LittleEndian, &record.Type); err != nil {
 				break
 			}
 			data := make([]byte, record.Length) // substracting the length of the type field
-			if err = binary.Read(reader, binary.BigEndian, &data); err != nil {
+			if err = binary.Read(reader, binary.LittleEndian, &data); err != nil {
 				break
 			}
 			record.Data = data

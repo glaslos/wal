@@ -3,18 +3,15 @@ package wal
 import (
 	"bytes"
 	"fmt"
-	"hash/crc32"
+	"io/ioutil"
+	"os"
 	"testing"
 )
 
-func validCRC(record *Record) bool {
-	return record.Checksum == crc32.ChecksumIEEE(append(record.Data, record.Type))
-}
-
 func TestCRC(t *testing.T) {
 	r := NewRecord([]uint8{1})
-	if r.Checksum != 801444648 {
-		t.Fatalf("Expecting checksum %d, got %d", 801444648, r.Checksum)
+	if r.Checksum != 2077166632 {
+		t.Fatalf("Expecting checksum %d, got %d", 2077166632, r.Checksum)
 	}
 }
 
@@ -37,8 +34,6 @@ func TestRead(t *testing.T) {
 	wal := NewWAL()
 	data := []byte{1, 2, 3, 4, 5}
 	record := NewRecord(data)
-	record.len()
-	record.crc()
 	b := bytes.Buffer{}
 	_, err := record.Write(&b)
 	if err != nil {
@@ -50,7 +45,7 @@ func TestRead(t *testing.T) {
 		t.Error(err)
 	}
 	for _, rec := range records {
-		if !validCRC(&rec) {
+		if !rec.Valid() {
 			t.Errorf("Got invalid CRC %d", rec.Checksum)
 		}
 		if int(rec.Length) != len(rec.Data) {
@@ -98,7 +93,7 @@ func TestReadSplit(t *testing.T) {
 		t.Error(err)
 	}
 	for _, rec := range records {
-		if !validCRC(&rec) {
+		if !rec.Valid() {
 			t.Errorf("Got invalid CRC %d", rec.Checksum)
 		}
 		if int(rec.Length) != len(rec.Data) {
@@ -115,9 +110,31 @@ func TestSplitRecord(t *testing.T) {
 	wal.Write(&record)
 }
 
+func TestRocks(t *testing.T) {
+	w := NewWAL()
+	r, err := os.Open("data/db/rocks.log")
+	if err != nil {
+		t.Error(err)
+	}
+	b, err := ioutil.ReadAll(r)
+	if err != nil {
+		t.Error(err)
+	}
+	nr := bytes.NewReader(b)
+	rec, err := w.Read(nr)
+	if err != nil {
+		t.Error(err)
+	}
+	if !rec[0].Valid() {
+		println("checksum not valid")
+	}
+}
+
 func BenchmarkWrite(b *testing.B) {
 	r := Record{Data: []uint8{1}}
 	wal := NewWAL()
+	b.SetBytes(int64(r.Length) + 7)
+	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
 		if err := wal.Write(&r); err != nil {
 			b.Error(err)
@@ -135,7 +152,9 @@ func BenchmarkRead(b *testing.B) {
 		b.Error(err)
 	}
 	r := bytes.NewReader(buf.Bytes())
+	b.SetBytes(int64(buf.Len()))
 	r.Seek(0, 0)
+	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
 		if _, err := wal.Read(r); err != nil {
 			b.Error(err)

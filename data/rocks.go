@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/hex"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -35,6 +36,7 @@ func main() {
 		panic(err)
 	}
 	b, _ := ioutil.ReadAll(r)
+	fmt.Printf("%s", hex.Dump(b))
 	nr := bytes.NewReader(b)
 	rec, err := w.Read(nr)
 	if err != nil {
@@ -44,6 +46,6 @@ func main() {
 	println(string(rec[0].Data[:21]))
 	rec[0].Data = rec[0].Data[:21]
 	if !rec[0].Valid() {
-		println("poop")
+		println("checksum not valid")
 	}
 }
