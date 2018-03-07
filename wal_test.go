@@ -65,7 +65,7 @@ func TestPadding(t *testing.T) {
 
 func TestFullBlock(t *testing.T) {
 	wal := NewWAL()
-	wal.blockSize = 10
+	wal.blockSize = 14
 	wal.pos = 5
 	record := NewRecord([]byte{1, 2, 3})
 	wal.Write(&record)
@@ -73,7 +73,7 @@ func TestFullBlock(t *testing.T) {
 
 func TestMiddle(t *testing.T) {
 	wal := NewWAL()
-	wal.blockSize = 10
+	wal.blockSize = 14
 	record := NewRecord([]byte{1, 2, 3, 4, 5, 6, 7, 8})
 	if err := wal.Write(&record); err != nil {
 		t.Error(err)
@@ -82,7 +82,7 @@ func TestMiddle(t *testing.T) {
 
 func TestReadSplit(t *testing.T) {
 	wal := NewWAL()
-	wal.blockSize = 10
+	wal.blockSize = 14
 	record := NewRecord([]byte{1, 2, 3, 4, 5, 6, 7, 8})
 	if err := wal.Write(&record); err != nil {
 		t.Error(err)
@@ -105,7 +105,7 @@ func TestReadSplit(t *testing.T) {
 
 func TestSplitRecord(t *testing.T) {
 	wal := NewWAL()
-	wal.blockSize = 8
+	wal.blockSize = 12
 	record := NewRecord([]byte{1, 2, 3})
 	wal.Write(&record)
 }
@@ -126,14 +126,15 @@ func TestRocks(t *testing.T) {
 		t.Error(err)
 	}
 	if !rec[0].Valid() {
-		println("checksum not valid")
+		t.Error("checksum not valid")
 	}
+	fmt.Printf("TestRocks %+v\n", rec)
 }
 
 func BenchmarkWrite(b *testing.B) {
 	r := Record{Data: []uint8{1}}
 	wal := NewWAL()
-	b.SetBytes(int64(r.Length) + 7)
+	b.SetBytes(int64(r.Length) + headerLen)
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
 		if err := wal.Write(&r); err != nil {
@@ -144,7 +145,7 @@ func BenchmarkWrite(b *testing.B) {
 
 func BenchmarkRead(b *testing.B) {
 	wal := NewWAL()
-	wal.blockSize = 10
+	wal.blockSize = 14
 	record := NewRecord([]byte{1, 2, 3, 4, 5})
 	buf := bytes.Buffer{}
 	_, err := record.Write(&buf)

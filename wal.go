@@ -18,6 +18,8 @@ const (
 	LAST
 )
 
+const headerLen = 7
+
 // WAL is a write ahead log
 type WAL struct {
 	buffer    bytes.Buffer
@@ -31,7 +33,13 @@ type Record struct {
 	Checksum uint32
 	Length   uint16
 	Type     uint8
-	Data     []uint8
+	Data     []byte
+}
+
+// RecyclableRecord contains a log message
+type RecyclableRecord struct {
+	Record
+	LogNumber uint32
 }
 
 const maskDelta = 0xA282EAD8
@@ -87,7 +95,10 @@ func (r *Record) WriteHeader(w io.Writer) (int, error) {
 	if err := binary.Write(w, binary.LittleEndian, r.Type); err != nil {
 		return 0, err
 	}
-	return 7, nil
+	/*if err := binary.Write(w, binary.LittleEndian, r.LogNumber); err != nil {
+		return 0, err
+	}*/
+	return headerLen, nil
 }
 
 // Bytes returns the whole record as Bytes
@@ -95,7 +106,7 @@ func (r *Record) Write(w io.Writer) (int, error) {
 	if _, err := r.WriteHeader(w); err != nil {
 		return 0, err
 	}
-	return w.Write([]byte(r.Data))
+	return w.Write(r.Data)
 }
 
 func (wal *WAL) padBlock(spaceInBlock int) error {
@@ -113,16 +124,16 @@ func (wal *WAL) spaceInBlock() int {
 }
 
 func (wal *WAL) fitsCurrentBlock(lenData int) bool {
-	return lenData+7 <= wal.spaceInBlock()
+	return lenData+headerLen <= wal.spaceInBlock()
 }
 
 func (wal *WAL) Write(record *Record) error {
 	written := 0
-	remaining := len(record.Data) - written
+	remaining := len(record.Data)
 	for remaining > 0 {
 		spaceInBlock := wal.spaceInBlock()
 		// We pad the block if the header doesn't fit
-		if spaceInBlock < 7 {
+		if spaceInBlock < headerLen {
 			wal.padBlock(spaceInBlock)
 			continue
 		}
@@ -147,7 +158,7 @@ func (wal *WAL) Write(record *Record) error {
 			// all remaining data
 			newLen = remaining
 		} else {
-			newLen = wal.spaceInBlock() - 7
+			newLen = wal.spaceInBlock() - headerLen
 		}
 		data := record.Data[written : written+newLen]
 		record.Length = uint16(newLen)
@@ -195,6 +206,9 @@ func (wal *WAL) Read(r *bytes.Reader) ([]Record, error) {
 			if err = binary.Read(reader, binary.LittleEndian, &record.Type); err != nil {
 				break
 			}
+			/*if err = binary.Read(reader, binary.LittleEndian, &record.LogNumber); err != nil {
+				break
+			}*/
 			data := make([]byte, record.Length) // substracting the length of the type field
 			if err = binary.Read(reader, binary.LittleEndian, &data); err != nil {
 				break
