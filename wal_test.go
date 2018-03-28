@@ -2,6 +2,7 @@ package wal
 
 import (
 	"bytes"
+	"crypto/rand"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -65,7 +66,7 @@ func TestPadding(t *testing.T) {
 
 func TestFullBlock(t *testing.T) {
 	wal := NewWAL()
-	wal.blockSize = 14
+	wal.blockSize = headerLen + 3
 	wal.pos = 5
 	record := NewRecord([]byte{1, 2, 3})
 	wal.Write(&record)
@@ -73,39 +74,16 @@ func TestFullBlock(t *testing.T) {
 
 func TestMiddle(t *testing.T) {
 	wal := NewWAL()
-	wal.blockSize = 14
+	wal.blockSize = headerLen + 3
 	record := NewRecord([]byte{1, 2, 3, 4, 5, 6, 7, 8})
 	if err := wal.Write(&record); err != nil {
 		t.Error(err)
 	}
-}
-
-func TestReadSplit(t *testing.T) {
-	wal := NewWAL()
-	wal.blockSize = 14
-	record := NewRecord([]byte{1, 2, 3, 4, 5, 6, 7, 8})
-	if err := wal.Write(&record); err != nil {
-		t.Error(err)
-	}
-	r := bytes.NewReader(wal.buffer.Bytes())
-	records, err := wal.Read(r)
-	if err != nil {
-		t.Error(err)
-	}
-	for _, rec := range records {
-		if !rec.Valid() {
-			t.Errorf("Got invalid CRC %d", rec.Checksum)
-		}
-		if int(rec.Length) != len(rec.Data) {
-			t.Errorf("Expected len %d got %d", len(rec.Data), rec.Length)
-		}
-	}
-	fmt.Printf("TestReadSplit %+v\n", records)
 }
 
 func TestSplitRecord(t *testing.T) {
 	wal := NewWAL()
-	wal.blockSize = 12
+	wal.blockSize = headerLen + 3
 	record := NewRecord([]byte{1, 2, 3})
 	wal.Write(&record)
 }
@@ -132,7 +110,9 @@ func TestRocks(t *testing.T) {
 }
 
 func BenchmarkWrite(b *testing.B) {
-	r := Record{Data: []uint8{1}}
+	p := make([]byte, 512)
+	rand.Read(p)
+	r := Record{Data: p}
 	wal := NewWAL()
 	b.SetBytes(int64(r.Length) + headerLen)
 	b.ResetTimer()
@@ -145,7 +125,7 @@ func BenchmarkWrite(b *testing.B) {
 
 func BenchmarkRead(b *testing.B) {
 	wal := NewWAL()
-	wal.blockSize = 14
+	wal.blockSize = headerLen + 5
 	record := NewRecord([]byte{1, 2, 3, 4, 5})
 	buf := bytes.Buffer{}
 	_, err := record.Write(&buf)

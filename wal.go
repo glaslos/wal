@@ -1,10 +1,12 @@
 package wal
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/binary"
 	"hash/crc32"
 	"io"
+	"io/ioutil"
 )
 
 const (
@@ -22,7 +24,7 @@ const headerLen = 7
 
 // WAL is a write ahead log
 type WAL struct {
-	buffer    bytes.Buffer
+	buffer    *bufio.Writer
 	pos       int
 	blockSize int
 	crcTable  *crc32.Table
@@ -57,9 +59,14 @@ func unmask(crc uint32) uint32 {
 
 // NewWAL create a new write ahead log
 func NewWAL() WAL {
+	w, err := ioutil.TempFile("/tmp", "bar")
+	if err != nil {
+		panic(err)
+	}
 	return WAL{
 		blockSize: 2 << 15, // 32kb
 		crcTable:  crc32.MakeTable(0x82f63b78),
+		buffer:    bufio.NewWriterSize(w, 2<<15),
 	}
 }
 
@@ -127,14 +134,26 @@ func (wal *WAL) fitsCurrentBlock(lenData int) bool {
 	return lenData+headerLen <= wal.spaceInBlock()
 }
 
+func write(record *Record, wal *WAL, data []byte) (int, error) {
+	n, err := record.WriteHeader(wal.buffer)
+	if err != nil {
+		return 0, err
+	}
+	wal.pos += n
+	n, err = wal.buffer.Write(data)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 func (wal *WAL) Write(record *Record) error {
 	written := 0
 	remaining := len(record.Data)
 	for remaining > 0 {
-		spaceInBlock := wal.spaceInBlock()
 		// We pad the block if the header doesn't fit
-		if spaceInBlock < headerLen {
-			wal.padBlock(spaceInBlock)
+		if wal.spaceInBlock() < headerLen {
+			wal.padBlock(wal.spaceInBlock())
 			continue
 		}
 		switch record.Type {
@@ -163,12 +182,7 @@ func (wal *WAL) Write(record *Record) error {
 		data := record.Data[written : written+newLen]
 		record.Length = uint16(newLen)
 		record.Checksum = mask(crc32.Checksum(append([]byte{record.Type}, data...), wal.crcTable))
-		n, err := record.WriteHeader(&wal.buffer)
-		if err != nil {
-			return err
-		}
-		wal.pos += n
-		n, err = wal.buffer.Write(data)
+		n, err := write(record, wal, data)
 		if err != nil {
 			return err
 		}

@@ -1,0 +1,7 @@
+goos: linux
+goarch: amd64
+pkg: github.com/glaslos/wal
+BenchmarkWrite-4   	10000000	       207 ns/op	  33.69 MB/s
+BenchmarkRead-4    	 3000000	       521 ns/op	  22.99 MB/s
+PASS
+ok  	github.com/glaslos/wal	4.443s
